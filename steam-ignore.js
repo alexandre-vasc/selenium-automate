@@ -19,26 +19,35 @@
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
 // first, try to load non-curator 'search result' style page
-let el = document.evaluate("//div[@id='search_resultsRows']/a", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-if (el.snapshotLength == 0) {
-    // no result, this is a curator page. We need to scroll down multiple times to load all items
-    let oldLen = 0
-    do {
-        oldLen = el.snapshotLength
-        window.scrollTo(0, document.body.scrollHeight);
-        await sleep(1000);
-        el = document.evaluate("//div[@id='RecommendationsRows']//a[@data-ds-appid]", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        console.log("Found " + el.snapshotLength + " games to ignore for now. Last query had: " + oldLen)
-        // continue until no more items
-    } while (el.snapshotLength > oldLen)
-    console.log("Found " + el.snapshotLength + " games to ignore")
-}
+
+let oldLen
+let elements
+
+// We may need to scroll down multiple times to load all items
+// lets scroll down in a loop until we find no more items    
+do {
+    oldLen = elements?.snapshotLength ?? 0
+    window.scrollTo(0, document.body.scrollHeight);
+    await sleep(1000);
+    elements = document.evaluate("//a[@data-ds-appid] | //div[@data-ds-appid]", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    if (!elements ) {
+        break
+    }
+    console.log("Found " + elements.snapshotLength + " games to ignore for now. Last query had: " + oldLen)
+    // continue until no more items
+} while (elements.snapshotLength > oldLen)
+
+if (elements?.snapshotLength == 0) {
+    throw new Error("No game found on page")
+} 
+console.log("Found " + elements.snapshotLength + " games to ignore")
+
 
 // extract the game IDs from the results
 // filter games that are already ignored
 const ids = []
-for (let i = 0; i < el.snapshotLength; i++) {       
-    const gameEl = el.snapshotItem(i)
+for (let i = 0; i < elements.snapshotLength; i++) {       
+    const gameEl = elements.snapshotItem(i)
     const id = gameEl.getAttribute('data-ds-appid')
     if (!id) {
         console.log("Game id not found")
