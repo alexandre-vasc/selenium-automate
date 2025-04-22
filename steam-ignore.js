@@ -12,13 +12,13 @@
  * 
  * !! Do not past random code on your terminal. Only execute code that you trust !!
  * 
- * The script will scroll down to load all games on the curator page.
+ * The script will scroll down to load all games on the page.
  * After loading everything, it will ignore one game at a time.
  */
 
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
-// first, try to load non-curator 'search result' style page
+async function ignoreSteam() {
 
 let oldLen
 let elements
@@ -45,7 +45,7 @@ console.log("Found " + elements.snapshotLength + " games to ignore")
 
 // extract the game IDs from the results
 // filter games that are already ignored
-const ids = []
+const ids = new Set()
 for (let i = 0; i < elements.snapshotLength; i++) {       
     const gameEl = elements.snapshotItem(i)
     const id = gameEl.getAttribute('data-ds-appid')
@@ -60,11 +60,10 @@ for (let i = 0; i < elements.snapshotLength; i++) {
             console.log("Game id " + id + " is already ignored")
             continue
         }
-    }    
-    ids.push(id)
+    }  
+    ids.add(id)
 }
-const filteredIds = ids.filter((item, _index) => item != undefined)
-console.log("After filtering we have " + filteredIds.length + " games to ignore")
+console.log("After filtering we have " + ids.size + " games to ignore")
 
 // get Steam session from the cookie. Do not share this!
 const sessionid = document.cookie.split('; ').find(row => row.startsWith('sessionid='))
@@ -74,15 +73,15 @@ if (!sessionid) {
 } else {
     // build a request and send to Steam to let it known we want to ignore the game.
     const uaData = navigator.userAgentData;
-    const secChUa = uaData.brands.map(b => `"${b.brand}";v="${b.version}"`).join(', ');
+    const secChUa = uaData?.brands?.map(b => `"${b.brand}";v="${b.version}"`).join(', ');
 
-    for (const id of filteredIds) {
+    for (const id of ids) {
         const fetchReturn = await fetch("https://store.steampowered.com/recommended/ignorerecommendation/", {
             "headers": {
                 "accept": "*/*",
                 "accept-language": navigator.languages.join(','),
                 "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "sec-ch-ua": secChUa,
+                ...(secChUa !== undefined && { "sec-ch-ua": secChUa }),
                 "sec-ch-ua-mobile": "?0",
                 "sec-ch-ua-platform": "\"Linux\"",
                 "sec-fetch-dest": "empty",
@@ -102,3 +101,6 @@ if (!sessionid) {
 }
 console.log("DONE")
 
+}
+
+ignoreSteam()
