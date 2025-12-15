@@ -1,9 +1,6 @@
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
-// button to unfollow curator
-const curatorXpath = "//div[@class='actions']/div/a[@class=' following_button btn_green_steamui btn_medium ']"
-
-let scrollToBottom = async () => {
+let scrollToBottom = async (xpath) => {
     let oldLen
     let elements
     // We may need to scroll down multiple times to load all items
@@ -12,7 +9,7 @@ let scrollToBottom = async () => {
         oldLen = elements?.snapshotLength ?? 0
         window.scrollTo(0, document.body.scrollHeight);
         await sleep(1000);
-        elements = document.evaluate(curatorXpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        elements = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
         if (!elements ) {
             break
         }
@@ -22,8 +19,9 @@ let scrollToBottom = async () => {
     return elements
 }
 
-let ignoreFollowedCurators = async () => {
-    const elements = await scrollToBottom()
+const ignoreFollowedCurators = async () => {
+    const curatorXpath = "//div[@class='actions']/div/a[@class=' following_button btn_green_steamui btn_medium ']"
+    const elements = await scrollToBottom(curatorXpath)
 
     // unfollow all curators
     if (elements?.snapshotLength > 0) {
@@ -35,9 +33,27 @@ let ignoreFollowedCurators = async () => {
             await sleep(1000)            
         }
     } else {
-        console.log("No curators to unfollow")
-    
+        console.log("No curators to unfollow")    
     }
+}
+
+const removeAllFromWishlist = async () => {
+    const removeButtonXpath = "//button[contains(text(), 'remove')]"
+    let continueProc = true
+    do {
+        const elements = await scrollToBottom(removeButtonXpath)
+        if (elements?.snapshotLength > 0) {
+            // we need to iterate an click on each element
+            for (let i = elements.snapshotLength - 1; i >= 0; i--) {  
+                console.log("Removing game " + (elements.snapshotLength - i) + " of " + elements.snapshotLength)
+                const curatorEl = elements.snapshotItem(i)
+                await curatorEl.click()
+                await sleep(1000)            
+            }
+        } else {
+            console.log("No games to remove from wishlist")   
+            continueProc = false 
+        }
+    } while (continueProc)
 
 }
-ignoreFollowedCurators()
