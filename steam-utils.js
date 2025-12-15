@@ -55,5 +55,29 @@ const removeAllFromWishlist = async () => {
             continueProc = false 
         }
     } while (continueProc)
+}
 
+let leaveAllGroups = async () => {
+    const leaveGroupButtonXpath = "//span[contains(text(), 'Leave Group')]"
+    const confirmationDialogXpath = "//div[@class='newmodal_buttons']//span[contains(text(), 'Leave Group')]"
+    const elements = await scrollToBottom(leaveGroupButtonXpath)
+    if (elements?.snapshotLength > 0) {
+        for (let i = elements.snapshotLength - 1; i >= 0; i--) {  
+            console.log("Leaving group " + (elements.snapshotLength - i) + " of " + elements.snapshotLength)
+            const curatorEl = elements.snapshotItem(i)
+            await curatorEl.click()
+            await sleep(1000)        
+            // confirmation dialog
+            const confirmation = document.evaluate(confirmationDialogXpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+            if (confirmation && confirmation.snapshotLength > 0) {
+                const btn = confirmation.snapshotItem(0)
+                await btn.click()
+                sleep(1000)
+            } else {
+                console.log("No confirmation dialog found")
+            }                
+        }
+    } else {
+        console.log("No games to remove from wishlist")   
+    }
 }
