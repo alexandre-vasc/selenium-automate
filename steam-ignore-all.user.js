@@ -1,10 +1,9 @@
 // ==UserScript==
-// @version      1.0.1
+// @version      1.1.1
 // @updateURL    https://raw.githubusercontent.com/alexandre-vasc/selenium-automate/refs/heads/main/steam-ignore-all.user.js
 // @downloadURL  https://raw.githubusercontent.com/alexandre-vasc/selenium-automate/refs/heads/main/steam-ignore-all.user.js
 // @name         Steam: Ignore all games on page
 // @namespace    https://github.com/alexandre-vasc/selenium-automate
-// @version      1.0.0
 // @description  Adds a button that scrolls the page to load every game, then marks each one as "Not Interested" (ignored) on Steam.
 // @match        https://store.steampowered.com/curator/*
 // @match        https://store.steampowered.com/developer/*
@@ -27,6 +26,7 @@
     const REQUEST_DELAY_MS = 2000;   // pause between ignore requests (be gentle with Steam)
     const SCROLL_DELAY_MS = 1000;    // wait after each scroll for lazy-loaded items
     const SCROLL_RETRIES = 2;        // extra scroll attempts with no new items before giving up
+    const INITIAL_WAIT_MS = 15000;   // how long to wait for the first games to render
     const SNR = '1_7_7_230_150_1';
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -86,9 +86,62 @@
         }
     });
 
-    // ---------- Core logic ----------
-    function collectGameElements() {
-        return document.querySelectorAll('a[data-ds-appid], div[data-ds-appid]');
+    // ---------- Game discovery ----------
+    const APP_LINK_RE = /\/app\/(\d+)/;
+
+    /**
+     * Returns { games: [{id, el, ignored}], mode }.
+     * Primary: classic Steam game cards carrying [data-ds-appid] (supports "already ignored" detection).
+     * Fallback: links to /app/<id>, for pages (e.g. newer React-based curator pages) that don't use data-ds-appid.
+     */
+    function collectGames() {
+        const games = [];
+
+        const cards = document.querySelectorAll('a[data-ds-appid], div[data-ds-appid]');
+        if (cards.length > 0) {
+            for (const el of cards) {
+                const raw = el.getAttribute('data-ds-appid');
+                if (!raw) continue;
+                const ignored =
+                    !!el.querySelector('.ds_ignored_flag') || el.classList.contains('ds_ignored');
+                // bundles can carry several comma-separated app IDs
+                raw.split(',').map((s) => s.trim()).filter(Boolean)
+                    .forEach((id) => games.push({ id, el, ignored }));
+            }
+            return { games, mode: 'cards' };
+        }
+
+        // Prefer links inside sale-widget cards (stable class name; the other classes are hashed and change).
+        // If none exist, use every app link on the page.
+        const scoped = document.querySelectorAll('.StoreSaleWidgetOuterContainer a[href*="/app/"]');
+        const links = scoped.length > 0 ? scoped : document.querySelectorAll('a[href*="/app/"]');
+
+        for (const a of links) {
+            if (a.closest('#global_header, #footer, .responsive_page_menu')) continue;
+            const m = (a.getAttribute('href') || '').match(APP_LINK_RE);
+            if (m) games.push({ id: m[1], el: a, ignored: false });
+        }
+        return { games, mode: 'links' };
+    }
+
+    const uniqueCount = (games) => new Set(games.map((g) => g.id)).size;
+
+    async function waitForFirstGames(timeoutMs) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs && !cancelled) {
+            if (collectGames().games.length > 0) return true;
+            setStatus('Waiting for games to render…');
+            await sleep(500);
+        }
+        return collectGames().games.length > 0;
+    }
+
+    function scrollToBottom() {
+        const { games } = collectGames();
+        const last = games[games.length - 1];
+        // scrolling the last item into view also works when the page scrolls inside an inner container
+        if (last) last.el.scrollIntoView({ block: 'end' });
+        window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
     }
 
     async function loadEverything() {
@@ -96,9 +149,9 @@
         let stale = 0;
 
         while (stale <= SCROLL_RETRIES && !cancelled) {
-            window.scrollTo(0, document.body.scrollHeight);
+            scrollToBottom();
             await sleep(SCROLL_DELAY_MS);
-            const count = collectGameElements().length;
+            const count = uniqueCount(collectGames().games);
             setStatus(`Scrolling… found ${count} games`);
             if (count > lastCount) {
                 lastCount = count;
@@ -110,45 +163,47 @@
         window.scrollTo(0, 0);
     }
 
-    function extractIds() {
-        const ids = new Set();
-        let alreadyIgnored = 0;
-
-        for (const el of collectGameElements()) {
-            const raw = el.getAttribute('data-ds-appid');
-            if (!raw) continue;
-
-            if (el.querySelector('.ds_ignored_flag') || el.classList.contains('ds_ignored')) {
-                alreadyIgnored++;
-                continue;
-            }
-            // bundles can carry several comma-separated app IDs
-            raw.split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => ids.add(id));
-        }
-        return { ids, alreadyIgnored };
-    }
-
     function getSessionId() {
         const match = document.cookie.match(/(?:^|;\s*)sessionid=([^;]+)/);
         return match ? decodeURIComponent(match[1]) : null;
     }
 
+    // ---------- Main ----------
     async function ignoreSteam() {
+        const found = await waitForFirstGames(INITIAL_WAIT_MS);
+        if (cancelled) { setStatus('Cancelled.'); return; }
+        if (!found) {
+            console.log('[steam-ignore] diagnostics:', {
+                'a/div[data-ds-appid]': document.querySelectorAll('a[data-ds-appid], div[data-ds-appid]').length,
+                'a[href*="/app/"]': document.querySelectorAll('a[href*="/app/"]').length,
+                url: location.href,
+            });
+            throw new Error('No games found on this page (see console for diagnostics).');
+        }
+
         await loadEverything();
         if (cancelled) { setStatus('Cancelled.'); return; }
 
-        const total = collectGameElements().length;
-        if (total === 0) throw new Error('No games found on this page.');
+        const { games, mode } = collectGames();
+        const ids = new Set();
+        const ignoredIds = new Set();
+        for (const g of games) {
+            if (g.ignored) ignoredIds.add(g.id);
+            else ids.add(g.id);
+        }
+        for (const id of ignoredIds) ids.delete(id);
 
-        const { ids, alreadyIgnored } = extractIds();
         if (ids.size === 0) {
-            setStatus(`Nothing to do (${alreadyIgnored} already ignored).`);
+            setStatus(`Nothing to do (${ignoredIds.size} already ignored).`);
             return;
         }
 
         const seconds = Math.round((ids.size * REQUEST_DELAY_MS) / 1000);
         const ok = confirm(
-            `Found ${ids.size} games to ignore (${alreadyIgnored} already ignored).\n` +
+            `Found ${ids.size} games to ignore (${ignoredIds.size} already ignored).\n` +
+            (mode === 'links'
+                ? 'Note: game cards were not detected, so app links on the page were used instead.\n'
+                : '') +
             `This will take about ${seconds}s. Continue?`
         );
         if (!ok) { setStatus('Cancelled.'); return; }
