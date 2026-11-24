@@ -9,7 +9,7 @@
  * - open the Browser's developer tools (usually with F12)
  * - navegate to the console tab
  * - past the code on the console
- * 
+ * s
  * !! Do not past random code on your terminal. Only execute code that you trust !!
  * 
  * The script will scroll down to load all games on the page.
